@@ -1,0 +1,40 @@
+# Render Blueprint — provisions the backend + PostgreSQL in one click.
+# In Render: New + → Blueprint → connect this repo → select this branch → Apply.
+# Docs: https://render.com/docs/blueprint-spec
+
+databases:
+  - name: encrypted-db
+    databaseName: encrypted
+    user: encrypted
+    plan: free
+
+services:
+  - type: web
+    name: encrypted-server
+    runtime: docker
+    plan: free
+    region: oregon
+    branch: claude/affectionate-goldberg-wwsiim
+    rootDir: server
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    envVars:
+      # Database connection is wired automatically from the database above.
+      - key: DATABASE_URL
+        fromDatabase:
+          name: encrypted-db
+          property: connectionString
+      # A strong secret is generated for you (you never see or manage it).
+      - key: JWT_SECRET
+        generateValue: true
+      - key: NODE_ENV
+        value: production
+      # Purchase verification — leave unset for now (DEV mode). Fill these in
+      # Render's dashboard when you're ready to take real payments.
+      # - key: ANDROID_PACKAGE
+      #   value: com.yourcompany.encrypted
+      # - key: GOOGLE_SERVICE_ACCOUNT_JSON
+      #   sync: false
+      # - key: APPLE_SHARED_SECRET
+      #   sync: false
