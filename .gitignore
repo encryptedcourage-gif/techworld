@@ -1,0 +1,35 @@
+# Dependencies
+node_modules/
+
+# Expo
+.expo/
+dist/
+web-build/
+expo-env.d.ts
+
+# Native
+android/
+ios/
+*.orig.*
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+
+# Secrets & store credentials (NEVER commit these)
+google-services.json
+GoogleService-Info.plist
+*.keystore
+service-account*.json
+.env
+.env.local
+
+# Metro / build
+.metro-health-check*
+*.tsbuildinfo
+
+# Misc
+.DS_Store
+npm-debug.*
+yarn-error.*
