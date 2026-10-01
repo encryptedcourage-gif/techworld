@@ -1,8 +1,9 @@
 import React from 'react';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { theme } from '@/theme';
 import { useEntitlements } from '@/monetization/entitlements';
 import { useChatStore } from '@/store/useChatStore';
+import { useAuthStore } from '@/store/useAuthStore';
 import type { Feature } from '@/monetization/products';
 
 const FEATURE_LABELS: Record<Feature, string> = {
@@ -15,7 +16,24 @@ const FEATURE_LABELS: Record<Feature, string> = {
 
 export function SettingsScreen() {
   const identity = useChatStore((s) => s.identity);
+  const resetChats = useChatStore((s) => s.reset);
+  const user = useAuthStore((s) => s.user);
+  const logout = useAuthStore((s) => s.logout);
   const isPro = useEntitlements((s) => s.isPro());
+
+  const onLogout = () => {
+    Alert.alert('Log out?', 'You can log back in anytime.', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Log out',
+        style: 'destructive',
+        onPress: async () => {
+          await resetChats();
+          await logout();
+        },
+      },
+    ]);
+  };
   const hasFeature = useEntitlements((s) => s.hasFeature);
   // Subscribe to changes so the list re-renders on new grants.
   useEntitlements((s) => s.ownedSkus);
@@ -28,6 +46,11 @@ export function SettingsScreen() {
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       <View style={styles.block}>
+        <Text style={styles.label}>Signed in as</Text>
+        <Text style={styles.value}>{user?.username ?? '—'}</Text>
+      </View>
+
+      <View style={[styles.block, { marginTop: theme.spacing(1) }]}>
         <Text style={styles.label}>Plan</Text>
         <Text style={styles.value}>{isPro ? 'Pro ✨' : 'Free'}</Text>
       </View>
@@ -56,6 +79,10 @@ export function SettingsScreen() {
           leaves your phone.
         </Text>
       </View>
+
+      <Pressable style={styles.logout} onPress={onLogout}>
+        <Text style={styles.logoutText}>Log out</Text>
+      </Pressable>
     </ScrollView>
   );
 }
@@ -98,4 +125,13 @@ const styles = StyleSheet.create({
     letterSpacing: 1,
   },
   hint: { color: theme.colors.textMuted, fontSize: 12, marginTop: 8 },
+  logout: {
+    marginTop: theme.spacing(3),
+    borderWidth: 1,
+    borderColor: theme.colors.danger,
+    borderRadius: theme.radius.md,
+    paddingVertical: theme.spacing(1.75),
+    alignItems: 'center',
+  },
+  logoutText: { color: theme.colors.danger, fontWeight: '700', fontSize: 16 },
 });

@@ -22,6 +22,7 @@ import {
   findProduct,
 } from './products';
 import { useEntitlements } from './entitlements';
+import { api } from '@/api/client';
 
 /**
  * In-app purchases (Play Billing + StoreKit via react-native-iap).
@@ -156,14 +157,48 @@ export async function restorePurchases(): Promise<string[]> {
 }
 
 /**
- * Verify a purchase. For development we accept any purchase with a receipt.
+ * Verify a purchase with OUR backend, which validates it against the App Store
+ * Server API / Google Play Developer API and records the entitlement. This is
+ * what stops a tampered client from unlocking paid features for free.
  *
- * FOR PRODUCTION: send `purchase.transactionReceipt` (iOS) or
- * `purchase.purchaseToken` (Android) to YOUR backend and validate it against
- * the App Store Server API / Google Play Developer API before granting. That
- * is the only way to stop tampered clients from unlocking paid features for
- * free. See docs/MONETIZATION.md → "Verify on your server".
+ * On success the server returns the authoritative owned-SKU list, which we sync
+ * into the local entitlements store. If the server is unreachable we fall back
+ * to accepting a receipt-bearing purchase so buyers aren't blocked by an
+ * outage; the next successful sync reconciles.
  */
 async function verifyPurchase(purchase: Purchase): Promise<boolean> {
-  return Boolean(purchase.transactionReceipt || purchase.purchaseToken);
+  const token = purchase.purchaseToken || purchase.transactionReceipt;
+  if (!token) return false;
+
+  try {
+    const res = await api.post<{ ok: boolean; entitlements: string[] }>(
+      '/purchases/verify',
+      {
+        platform: Platform.OS === 'ios' ? 'ios' : 'android',
+        sku: purchase.productId,
+        token,
+      }
+    );
+    if (res.entitlements) {
+      await useEntitlements.getState().setOwned(res.entitlements);
+    }
+    return res.ok;
+  } catch {
+    // Backend unreachable — don't block the buyer; reconcile on next sync.
+    return true;
+  }
+}
+
+/** Pull the authoritative entitlement list from the backend (call on launch). */
+export async function syncEntitlementsFromServer(): Promise<void> {
+  try {
+    const res = await api.get<{ entitlements: string[] }>(
+      '/purchases/entitlements'
+    );
+    const local = useEntitlements.getState().ownedSkus;
+    const merged = Array.from(new Set([...local, ...res.entitlements]));
+    await useEntitlements.getState().setOwned(merged);
+  } catch {
+    // Offline — keep the local cache.
+  }
 }

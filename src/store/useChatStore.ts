@@ -1,100 +1,255 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { create } from 'zustand';
-import { loadOrCreateIdentity, open, seal, type KeyPair } from '@/crypto/e2ee';
+import {
+  loadOrCreateIdentity,
+  open,
+  seal,
+  type KeyPair,
+} from '@/crypto/e2ee';
+import { api, getAuthToken } from '@/api/client';
+import { WS_URL } from '@/api/config';
 
 /**
- * Chat state.
+ * Chat state backed by the real server.
  *
- * This is a local, demo-grade store that keeps conversations in memory and
- * seeds a couple of sample chats so the UI is explorable without a backend.
- * In production you would:
- *   - publish your public key to a key-directory server,
- *   - relay sealed messages through a transport (WebSocket / push),
- *   - persist history encrypted-at-rest on device.
- * The encryption layer in src/crypto/e2ee.ts is already production-shaped.
+ * - Identity keys come from the device keychain (src/crypto/e2ee.ts).
+ * - Outgoing messages are sealed for the peer and POSTed; we keep the plaintext
+ *   locally because NaCl box cannot decrypt our own outgoing ciphertext.
+ * - Incoming messages arrive live over a WebSocket, or are fetched from the
+ *   server mailbox on startup, then decrypted locally.
+ * - History is cached in AsyncStorage so it survives restarts.
  */
 
 export interface Message {
   id: string;
-  chatId: string;
+  chatId: string; // peer user id
   mine: boolean;
   text: string;
   sentAt: number;
 }
 
 export interface Chat {
-  id: string;
-  name: string;
-  /** base64 public key of the peer (demo: a generated contact key). */
+  peerId: string;
+  peerUsername: string;
   peerPublicKey: string;
-  avatarColor: string;
   messages: Message[];
+}
+
+interface WireMessage {
+  id: string;
+  senderId: string;
+  senderUsername: string;
+  senderPublicKey: string;
+  ciphertext: string;
+  nonce: string;
+  sentAt: string;
 }
 
 interface ChatState {
   ready: boolean;
   identity: KeyPair | null;
   chats: Chat[];
+  socket: WebSocket | null;
   init: () => Promise<void>;
-  sendMessage: (chatId: string, text: string) => void;
-  getChat: (chatId: string) => Chat | undefined;
+  startChat: (username: string) => Promise<string>;
+  sendMessage: (peerId: string, text: string) => Promise<void>;
+  getChat: (peerId: string) => Chat | undefined;
+  reset: () => Promise<void>;
 }
 
-const PALETTE = ['#00A884', '#6A5ACD', '#E0794B', '#4FA8E0', '#C0617D'];
+const STORAGE_KEY = 'chats.v1';
 
-export const useChatStore = create<ChatState>((set, get) => ({
-  ready: false,
-  identity: null,
-  chats: [],
+async function persist(chats: Chat[]): Promise<void> {
+  try {
+    await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(chats));
+  } catch {
+    // Non-fatal: history re-syncs from the server mailbox.
+  }
+}
 
-  init: async () => {
-    if (get().ready) return;
-    const identity = await loadOrCreateIdentity();
-
-    // Seed demo contacts so the chat list isn't empty on first run.
-    const seeded: Chat[] = ['Ada', 'Grace', 'Alan'].map((name, i) => ({
-      id: `chat_${i}`,
-      name,
-      peerPublicKey: identity.publicKey, // demo loopback key
-      avatarColor: PALETTE[i % PALETTE.length],
-      messages: [
-        {
-          id: `m_${i}_0`,
-          chatId: `chat_${i}`,
-          mine: false,
-          text: `Hey! This chat is end-to-end encrypted 🔒`,
-          sentAt: Date.now() - (i + 1) * 60000,
-        },
-      ],
-    }));
-
-    set({ identity, chats: seeded, ready: true });
-  },
-
-  sendMessage: (chatId, text) => {
+export const useChatStore = create<ChatState>((set, get) => {
+  /** Upsert an incoming (decrypted) message into the right chat. */
+  function ingest(wire: WireMessage): void {
     const { identity, chats } = get();
-    if (!identity || !text.trim()) return;
-    const chat = chats.find((c) => c.id === chatId);
-    if (!chat) return;
+    if (!identity) return;
 
-    // Demonstrate real sealing/opening round-trip for the sent message.
-    const sealed = seal(text.trim(), chat.peerPublicKey, identity.secretKey);
-    const roundTripped =
-      open(sealed, identity.publicKey, identity.secretKey) ?? text.trim();
+    const plaintext = open(
+      { ciphertext: wire.ciphertext, nonce: wire.nonce },
+      wire.senderPublicKey,
+      identity.secretKey
+    );
+    if (plaintext === null) return; // couldn't decrypt — drop silently
 
     const message: Message = {
-      id: `m_${chatId}_${chat.messages.length}`,
-      chatId,
-      mine: true,
-      text: roundTripped,
-      sentAt: Date.now(),
+      id: wire.id,
+      chatId: wire.senderId,
+      mine: false,
+      text: plaintext,
+      sentAt: new Date(wire.sentAt).getTime(),
     };
 
-    set({
-      chats: chats.map((c) =>
-        c.id === chatId ? { ...c, messages: [...c.messages, message] } : c
-      ),
-    });
-  },
+    const existing = chats.find((c) => c.peerId === wire.senderId);
+    let next: Chat[];
+    if (existing) {
+      if (existing.messages.some((m) => m.id === message.id)) return; // dedupe
+      next = chats.map((c) =>
+        c.peerId === wire.senderId
+          ? {
+              ...c,
+              peerPublicKey: wire.senderPublicKey,
+              messages: [...c.messages, message],
+            }
+          : c
+      );
+    } else {
+      next = [
+        {
+          peerId: wire.senderId,
+          peerUsername: wire.senderUsername,
+          peerPublicKey: wire.senderPublicKey,
+          messages: [message],
+        },
+        ...chats,
+      ];
+    }
+    set({ chats: next });
+    void persist(next);
+  }
 
-  getChat: (chatId) => get().chats.find((c) => c.id === chatId),
-}));
+  function connectSocket(): void {
+    const token = getAuthToken();
+    if (!token) return;
+    if (get().socket) return;
+
+    const ws = new WebSocket(`${WS_URL}?token=${encodeURIComponent(token)}`);
+    ws.onmessage = (event) => {
+      try {
+        const payload = JSON.parse(String(event.data));
+        if (payload.type === 'message' && payload.message) {
+          ingest(payload.message as WireMessage);
+        }
+      } catch {
+        // ignore malformed frames
+      }
+    };
+    ws.onclose = () => {
+      set({ socket: null });
+      // Reconnect if still authenticated.
+      if (getAuthToken()) setTimeout(connectSocket, 3000);
+    };
+    ws.onerror = () => ws.close();
+    set({ socket: ws });
+  }
+
+  return {
+    ready: false,
+    identity: null,
+    chats: [],
+    socket: null,
+
+    init: async () => {
+      const identity = await loadOrCreateIdentity();
+
+      let chats: Chat[] = [];
+      try {
+        const raw = await AsyncStorage.getItem(STORAGE_KEY);
+        if (raw) chats = JSON.parse(raw) as Chat[];
+      } catch {
+        chats = [];
+      }
+
+      set({ identity, chats, ready: true });
+
+      // Live socket + catch up on anything missed while offline.
+      connectSocket();
+      try {
+        const { messages } = await api.get<{ messages: WireMessage[] }>(
+          '/messages/pending'
+        );
+        messages.forEach(ingest);
+      } catch {
+        // Offline — we'll sync when the socket reconnects.
+      }
+    },
+
+    startChat: async (username) => {
+      const existing = get().chats.find(
+        (c) => c.peerUsername.toLowerCase() === username.toLowerCase()
+      );
+      if (existing) return existing.peerId;
+
+      const peer = await api.get<{
+        id: string;
+        username: string;
+        publicKey: string;
+      }>(`/users/${encodeURIComponent(username)}`);
+
+      const chat: Chat = {
+        peerId: peer.id,
+        peerUsername: peer.username,
+        peerPublicKey: peer.publicKey,
+        messages: [],
+      };
+      const next = [chat, ...get().chats];
+      set({ chats: next });
+      void persist(next);
+      return peer.id;
+    },
+
+    sendMessage: async (peerId, text) => {
+      const { identity, chats } = get();
+      const body = text.trim();
+      if (!identity || !body) return;
+      const chat = chats.find((c) => c.peerId === peerId);
+      if (!chat) return;
+
+      const sealed = seal(body, chat.peerPublicKey, identity.secretKey);
+
+      // Optimistically add to the UI with a temporary id.
+      const tempId = `local_${Date.now()}`;
+      const optimistic: Message = {
+        id: tempId,
+        chatId: peerId,
+        mine: true,
+        text: body,
+        sentAt: Date.now(),
+      };
+      const withOptimistic = chats.map((c) =>
+        c.peerId === peerId ? { ...c, messages: [...c.messages, optimistic] } : c
+      );
+      set({ chats: withOptimistic });
+
+      try {
+        const res = await api.post<{ id: string; sentAt: string }>('/messages', {
+          recipientId: peerId,
+          ciphertext: sealed.ciphertext,
+          nonce: sealed.nonce,
+        });
+        // Replace temp id with the server id.
+        const confirmed = get().chats.map((c) =>
+          c.peerId === peerId
+            ? {
+                ...c,
+                messages: c.messages.map((m) =>
+                  m.id === tempId ? { ...m, id: res.id } : m
+                ),
+              }
+            : c
+        );
+        set({ chats: confirmed });
+        void persist(confirmed);
+      } catch {
+        // Keep the optimistic message; a resend/queue could be added later.
+        void persist(get().chats);
+      }
+    },
+
+    getChat: (peerId) => get().chats.find((c) => c.peerId === peerId),
+
+    reset: async () => {
+      get().socket?.close();
+      set({ chats: [], socket: null, ready: false });
+      await AsyncStorage.removeItem(STORAGE_KEY);
+    },
+  };
+});

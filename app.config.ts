@@ -54,6 +54,12 @@ const config: ExpoConfig = {
       },
     ],
     'expo-secure-store',
+    [
+      'expo-notifications',
+      {
+        color: '#00A884',
+      },
+    ],
   ],
   extra: {
     eas: {

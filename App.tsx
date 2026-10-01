@@ -1,34 +1,46 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { ActivityIndicator, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { theme } from '@/theme';
 import { RootNavigator } from '@/navigation/RootNavigator';
 import { useChatStore } from '@/store/useChatStore';
+import { useAuthStore } from '@/store/useAuthStore';
 import { useEntitlements } from '@/monetization/entitlements';
 import { initAds, preloadInterstitial } from '@/monetization/ads';
-import { initIAP, restorePurchases, teardownIAP } from '@/monetization/iap';
+import {
+  initIAP,
+  restorePurchases,
+  syncEntitlementsFromServer,
+  teardownIAP,
+} from '@/monetization/iap';
+import { registerForPush } from '@/push/notifications';
 
 /**
- * App entry point. Boots the three subsystems the product depends on:
- *   1. identity + chat state (end-to-end encryption keys)
- *   2. entitlements (what the user has paid for)
- *   3. monetization (ads + in-app purchases)
+ * App entry point. Boots the subsystems in order:
+ *   1. local entitlements + auth session (so gating + routing are correct)
+ *   2. monetization (ads + in-app purchases)
+ *   3. once authenticated: chat (encryption keys, live socket), push,
+ *      and server-side entitlement sync.
  */
 export default function App() {
-  const [booted, setBooted] = useState(false);
-  const initChat = useChatStore((s) => s.init);
-  const hydrateEntitlements = useEntitlements((s) => s.hydrate);
+  const authLoading = useAuthStore((s) => s.loading);
+  const restoreAuth = useAuthStore((s) => s.restore);
+  const token = useAuthStore((s) => s.token);
 
+  const hydrateEntitlements = useEntitlements((s) => s.hydrate);
+  const entitlementsHydrated = useEntitlements((s) => s.hydrated);
+  const initChat = useChatStore((s) => s.init);
+  const chatReady = useChatStore((s) => s.ready);
+
+  const sessionStarted = useRef(false);
+
+  // One-time startup: local state + monetization.
   useEffect(() => {
-    let mounted = true;
+    void hydrateEntitlements();
+    void restoreAuth();
 
     (async () => {
-      // 1 + 2: local state first so the UI can render correct gating instantly.
-      await Promise.all([initChat(), hydrateEntitlements()]);
-      if (mounted) setBooted(true);
-
-      // 3: monetization can initialize in the background.
       try {
         await initAds();
         preloadInterstitial();
@@ -37,18 +49,35 @@ export default function App() {
       }
       try {
         await initIAP();
-        // Reconcile owned products with the store (e.g. after reinstall).
-        await restorePurchases();
       } catch (err) {
         console.warn('[app] iap init failed', err);
       }
     })();
 
     return () => {
-      mounted = false;
       void teardownIAP();
     };
-  }, [initChat, hydrateEntitlements]);
+  }, [hydrateEntitlements, restoreAuth]);
+
+  // When the user becomes authenticated, start the per-session subsystems once.
+  useEffect(() => {
+    if (!token || sessionStarted.current) return;
+    sessionStarted.current = true;
+
+    (async () => {
+      await initChat();
+      await registerForPush(true);
+      await syncEntitlementsFromServer();
+      await restorePurchases().catch(() => undefined);
+    })();
+  }, [token, initChat]);
+
+  // Reset the session guard on logout so a re-login re-initializes.
+  useEffect(() => {
+    if (!token) sessionStarted.current = false;
+  }, [token]);
+
+  const booted = !authLoading && entitlementsHydrated && (!token || chatReady);
 
   if (!booted) {
     return (

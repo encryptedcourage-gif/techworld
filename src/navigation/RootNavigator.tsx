@@ -4,10 +4,13 @@ import { NavigationContainer, DarkTheme } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { theme } from '@/theme';
+import { AuthScreen } from '@/screens/AuthScreen';
 import { ChatListScreen } from '@/screens/ChatListScreen';
 import { ChatRoomScreen } from '@/screens/ChatRoomScreen';
+import { NewChatScreen } from '@/screens/NewChatScreen';
 import { StoreScreen } from '@/screens/StoreScreen';
 import { SettingsScreen } from '@/screens/SettingsScreen';
+import { useAuthStore } from '@/store/useAuthStore';
 import type { RootStackParamList, TabParamList } from './types';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -61,6 +64,8 @@ function Tabs() {
 }
 
 export function RootNavigator() {
+  const token = useAuthStore((s) => s.token);
+
   return (
     <NavigationContainer theme={navTheme}>
       <Stack.Navigator
@@ -69,12 +74,27 @@ export function RootNavigator() {
           headerTintColor: '#fff',
         }}
       >
-        <Stack.Screen
-          name="Tabs"
-          component={Tabs}
-          options={{ headerShown: false }}
-        />
-        <Stack.Screen name="ChatRoom" component={ChatRoomScreen} />
+        {token ? (
+          <>
+            <Stack.Screen
+              name="Tabs"
+              component={Tabs}
+              options={{ headerShown: false }}
+            />
+            <Stack.Screen name="ChatRoom" component={ChatRoomScreen} />
+            <Stack.Screen
+              name="NewChat"
+              component={NewChatScreen}
+              options={{ title: 'New chat' }}
+            />
+          </>
+        ) : (
+          <Stack.Screen
+            name="Tabs"
+            component={AuthScreen}
+            options={{ headerShown: false }}
+          />
+        )}
       </Stack.Navigator>
     </NavigationContainer>
   );

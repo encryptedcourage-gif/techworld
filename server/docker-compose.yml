@@ -1,0 +1,36 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: encrypted
+      POSTGRES_PASSWORD: encrypted
+      POSTGRES_DB: encrypted
+    ports:
+      - '5432:5432'
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U encrypted']
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  server:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PORT: 8080
+      DATABASE_URL: postgres://encrypted:encrypted@db:5432/encrypted
+      JWT_SECRET: ${JWT_SECRET:-dev-insecure-secret-change-me}
+      ANDROID_PACKAGE: ${ANDROID_PACKAGE:-com.yourcompany.encrypted}
+      GOOGLE_SERVICE_ACCOUNT_JSON: ${GOOGLE_SERVICE_ACCOUNT_JSON:-}
+      APPLE_SHARED_SECRET: ${APPLE_SHARED_SECRET:-}
+    ports:
+      - '8080:8080'
+
+volumes:
+  pgdata:

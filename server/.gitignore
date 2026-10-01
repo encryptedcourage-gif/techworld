@@ -1,0 +1,7 @@
+node_modules/
+dist/
+.env
+*.log
+# Store credentials — never commit
+google-service-account.json
+AuthKey_*.p8
