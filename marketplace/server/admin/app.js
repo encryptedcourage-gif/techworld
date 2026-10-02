@@ -8,6 +8,8 @@ const state = {
   user: JSON.parse(localStorage.getItem('mkt_admin_user') || 'null'),
   pollTimer: null,
   convId: null,
+  convMemberId: null,
+  convMemberLabel: '',
   lastMsgId: 0,
 };
 
@@ -108,6 +110,10 @@ function renderAdmin() {
     catch (err) { input.value = body; alert(err.message); }
   };
 
+  $('#clearAllChats').onclick = clearAllChats;
+  $('#clearChat').onclick = clearChat;
+  $('#closeAccount').onclick = closeAccount;
+
   loadConversations();
   state.pollTimer = setInterval(() => {
     if (!app.querySelector('[data-page="inbox"]').hidden) { loadConversations(true); if (state.convId) loadChat(); }
@@ -131,19 +137,75 @@ async function loadConversations(quiet = false) {
           ${c.unread ? `<span class="badge">${c.unread}</span>` : ''}
         </div>
         <div class="ci-last">${esc(c.lastBody || 'No messages yet')}</div>`;
-      item.onclick = () => openConversation(c.id, c.memberName || c.memberEmail);
+      item.onclick = () => openConversation(c);
       list.append(item);
     });
   } catch (e) { if (!quiet) $('#convList').innerHTML = `<p class="error">${esc(e.message)}</p>`; }
 }
 
-async function openConversation(id, title) {
-  state.convId = id;
+async function openConversation(c) {
+  state.convId = c.id;
+  state.convMemberId = c.memberId;
+  state.convMemberLabel = c.memberName || c.memberEmail;
   state.lastMsgId = 0;
-  $('#convTitle').textContent = title;
+  $('#convTitle').textContent = state.convMemberLabel;
+  $('#chatHeadActions').hidden = false;
+  $('#convHint').hidden = false;
   $('#adminComposer').hidden = false;
   await loadChat(true);
   loadConversations(true);
+}
+
+function resetConversationView(emptyText) {
+  state.convId = null;
+  state.convMemberId = null;
+  state.convMemberLabel = '';
+  state.lastMsgId = 0;
+  $('#convTitle').textContent = 'Select a conversation';
+  $('#chatHeadActions').hidden = true;
+  $('#convHint').hidden = true;
+  $('#adminComposer').hidden = true;
+  $('#adminChat').innerHTML = `<p class="empty">${esc(emptyText || 'Select a conversation')}</p>`;
+}
+
+async function deleteMessage(id) {
+  try {
+    await api(`/api/admin/messages/${id}`, { method: 'DELETE' });
+    state.lastMsgId = 0;        // force a clean refresh
+    await loadChat(true);
+    loadConversations(true);
+  } catch (e) { alert(e.message); }
+}
+
+async function clearChat() {
+  if (!state.convId) return;
+  if (!confirm(`Delete ALL messages in the chat with ${state.convMemberLabel}? This cannot be undone. The account stays.`)) return;
+  try {
+    await api(`/api/admin/conversations/${state.convId}/messages`, { method: 'DELETE' });
+    state.lastMsgId = 0;
+    await loadChat(true);
+    loadConversations(true);
+  } catch (e) { alert(e.message); }
+}
+
+async function clearAllChats() {
+  if (!confirm('Delete EVERY message in EVERY conversation? Member accounts stay. This cannot be undone.')) return;
+  try {
+    await api('/api/admin/chats', { method: 'DELETE' });
+    state.lastMsgId = 0;
+    if (state.convId) await loadChat(true);
+    loadConversations(true);
+  } catch (e) { alert(e.message); }
+}
+
+async function closeAccount() {
+  if (!state.convMemberId) return;
+  if (!confirm(`Close the account for ${state.convMemberLabel}? Their login AND chat are permanently deleted. Use this for accounts that don't belong.`)) return;
+  try {
+    await api(`/api/admin/members/${state.convMemberId}`, { method: 'DELETE' });
+    resetConversationView('Account closed.');
+    loadConversations(true);
+  } catch (e) { alert(e.message); }
 }
 
 async function loadChat(initial = false) {
@@ -273,7 +335,14 @@ function appendBubbles(chat, messages, myRole) {
     const b = document.createElement('div');
     if (m.role === 'system') b.className = 'bubble system';
     else b.className = 'bubble ' + (m.role === myRole ? 'mine' : 'theirs');
+    b.dataset.id = m.id;
     b.innerHTML = `${esc(m.body)}<span class="meta">${m.role === 'system' ? '' : m.role} · ${timeStr(m.createdAt)}</span>`;
+    const del = document.createElement('button');
+    del.className = 'msg-del';
+    del.title = 'Delete this message';
+    del.textContent = '✕';
+    del.onclick = () => deleteMessage(m.id);
+    b.append(del);
     chat.append(b);
   });
   if (nearBottom) chat.scrollTop = chat.scrollHeight;

@@ -36,10 +36,21 @@
       </nav>
 
       <section class="tab-page" data-page="inbox">
+        <div class="inbox-toolbar">
+          <button id="clearAllChats" class="danger">Clear ALL chats</button>
+          <span class="muted small">Deletes every message in every conversation. Member accounts stay.</span>
+        </div>
         <div class="layout">
           <aside class="panel conv-list" id="convList"></aside>
           <section class="panel chat-panel">
-            <h2 id="convTitle">Select a conversation</h2>
+            <div class="chat-head">
+              <h2 id="convTitle">Select a conversation</h2>
+              <div class="chat-head-actions" id="chatHeadActions" hidden>
+                <button id="clearChat">Clear chat</button>
+                <button id="closeAccount" class="danger">Close account</button>
+              </div>
+            </div>
+            <p class="muted small" id="convHint" hidden>Tip: hover a message and click ✕ to delete just that message.</p>
             <div class="chat" id="adminChat"></div>
             <form class="composer" id="adminComposer" hidden>
               <input type="text" id="adminInput" placeholder="Reply to this member…" autocomplete="off" />

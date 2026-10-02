@@ -199,4 +199,21 @@ export const Messages = {
       .prepare('SELECT * FROM messages WHERE conversation_id = ? AND id > ? ORDER BY id ASC')
       .all(conversationId, sinceId);
   },
+  get(id) {
+    return db.prepare('SELECT * FROM messages WHERE id = ?').get(id);
+  },
+  // Delete one message.
+  remove(id) {
+    return db.prepare('DELETE FROM messages WHERE id = ?').run(id).changes;
+  },
+  // Wipe every message in one conversation (keeps the conversation itself).
+  clearConversation(conversationId) {
+    db.prepare('DELETE FROM messages WHERE conversation_id = ?').run(conversationId);
+    db.prepare('UPDATE conversations SET admin_unread = 0, member_unread = 0 WHERE id = ?').run(conversationId);
+  },
+  // Wipe every message in every conversation.
+  clearAll() {
+    db.prepare('DELETE FROM messages').run();
+    db.prepare('UPDATE conversations SET admin_unread = 0, member_unread = 0').run();
+  },
 };

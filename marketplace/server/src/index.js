@@ -225,6 +225,28 @@ adminApp.post('/api/admin/conversations/:id/messages', requireAdmin, (req, res) 
   res.json({ message: msgOut(Messages.add({ conversationId: conv.id, senderRole: 'admin', body })) });
 });
 
+// Delete a single message.
+adminApp.delete('/api/admin/messages/:id', requireAdmin, (req, res) => {
+  const msg = Messages.get(Number(req.params.id));
+  if (!msg) return res.status(404).json({ error: 'Message not found.' });
+  Messages.remove(msg.id);
+  res.json({ ok: true });
+});
+
+// Clear every message in one conversation (keeps the member and the thread).
+adminApp.delete('/api/admin/conversations/:id/messages', requireAdmin, (req, res) => {
+  const conv = Conversations.byId(Number(req.params.id));
+  if (!conv) return res.status(404).json({ error: 'Conversation not found.' });
+  Messages.clearConversation(conv.id);
+  res.json({ ok: true });
+});
+
+// Clear every message in every conversation.
+adminApp.delete('/api/admin/chats', requireAdmin, (_req, res) => {
+  Messages.clearAll();
+  res.json({ ok: true });
+});
+
 // Admin site: serve its own files, plus the shared stylesheet.
 adminApp.get('/styles.css', (_req, res) => res.sendFile(join(PUBLIC_DIR, 'styles.css')));
 adminApp.use(express.static(ADMIN_DIR));

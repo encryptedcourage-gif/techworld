@@ -87,7 +87,7 @@ form .row > label { flex: 1 1 140px; }
 .chat-panel { display: flex; flex-direction: column; min-height: 460px; }
 .chat { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 8px;
   padding: 10px; background: var(--bg); border: 1px solid var(--line); border-radius: 12px; min-height: 300px; max-height: 60vh; }
-.bubble { max-width: 80%; padding: 9px 12px; border-radius: 12px; white-space: pre-wrap; word-wrap: break-word; }
+.bubble { position: relative; max-width: 80%; padding: 9px 12px; border-radius: 12px; white-space: pre-wrap; word-wrap: break-word; }
 .bubble .meta { display: block; font-size: 11px; color: var(--muted); margin-top: 4px; }
 .bubble.mine { align-self: flex-end; background: var(--accent); color: #1a1109; }
 .bubble.theirs { align-self: flex-start; background: var(--panel-2); }
@@ -126,3 +126,16 @@ form .row > label { flex: 1 1 140px; }
 .pill { font-size: 11px; padding: 2px 8px; border-radius: 999px; background: #223; color: var(--muted); }
 .pill.off { background: #3a2222; color: #e0a0a0; }
 .plan-form, .member-form { background: var(--panel-2); border: 1px solid var(--line); border-radius: 12px; padding: 14px; }
+
+/* Admin chat moderation controls */
+.inbox-toolbar { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; flex-wrap: wrap; }
+.chat-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.chat-head h2 { margin: 0; }
+.chat-head-actions { display: flex; gap: 8px; }
+.msg-del {
+  position: absolute; top: 3px; right: 4px; width: 20px; height: 20px; padding: 0; line-height: 18px;
+  text-align: center; border-radius: 999px; background: var(--panel); border: 1px solid var(--line);
+  color: var(--muted); font-size: 11px; display: none;
+}
+.bubble:hover .msg-del { display: block; }
+.msg-del:hover { background: var(--danger); border-color: var(--danger); color: #fff; }
