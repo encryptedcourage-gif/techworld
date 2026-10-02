@@ -1,4 +1,4 @@
-import Database from 'better-sqlite3';
+import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { config } from './config.js';
@@ -8,11 +8,15 @@ import { config } from './config.js';
 // stored in this file. Because it is a real file on disk — not kept in memory
 // — it survives the server restarting and the laptop going to sleep. WAL mode
 // keeps writes durable and lets reads and writes happen at the same time.
+//
+// Uses Node's BUILT-IN SQLite (node:sqlite), so there is no native module to
+// compile — it works on whatever modern Node you have installed. The API is
+// the same shape as better-sqlite3: prepare().run()/.get()/.all().
 mkdirSync(dirname(config.dbPath), { recursive: true });
 
-export const db = new Database(config.dbPath);
-db.pragma('journal_mode = WAL');
-db.pragma('synchronous = NORMAL'); // durable + fast; survives process crash
+export const db = new DatabaseSync(config.dbPath);
+db.exec('PRAGMA journal_mode = WAL;');
+db.exec('PRAGMA synchronous = NORMAL;'); // durable + fast; survives process crash
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS users (

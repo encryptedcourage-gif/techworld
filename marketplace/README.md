@@ -41,7 +41,8 @@ You (ADMIN link, a separate private URL) ──► plans · members · reply to 
 
 ## Run it (on your laptop)
 
-Needs **Node.js 20+**.
+Needs **Node.js 22.5+** (24 or newer recommended — the database uses Node's
+built-in SQLite, so there is nothing to compile).
 
 ```bash
 cd marketplace/server
