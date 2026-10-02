@@ -30,12 +30,31 @@ function render() {
   }
 }
 
+function timeLeft(iso) {
+  const ms = new Date(iso).getTime() - Date.now();
+  if (ms <= 0) return 'ended';
+  const h = Math.floor(ms / 3600000);
+  if (h >= 1) return `${h}h left`;
+  return `${Math.max(1, Math.floor(ms / 60000))}m left`;
+}
+
 function updateUsage() {
   const u = state.user;
   if (!u) return;
-  const left = Math.max(0, u.monthlyLimit - u.usedThisMonth);
-  const plan = u.subscription === 'active' ? 'Subscribed' : 'Free plan';
-  $('usage').innerHTML = `${plan} — <strong>${left}</strong> of ${u.monthlyLimit} messages left this month`;
+  const upgrade = u.plan !== 'pro' ? ' · <a href="#" id="upgradeLink">Upgrade</a>' : '';
+  let text;
+  if (u.plan === 'free') {
+    text =
+      u.trialActive && u.trialEndsAt
+        ? `Free trial — <strong>${timeLeft(u.trialEndsAt)}</strong>`
+        : `Free trial ended — upgrade to keep creating`;
+  } else {
+    const left = Math.max(0, u.monthlyLimit - u.usedThisMonth);
+    text = `${u.planLabel} plan — <strong>${left}</strong> of ${u.monthlyLimit} messages left this month`;
+  }
+  $('usage').innerHTML = text + upgrade;
+  const link = $('upgradeLink');
+  if (link) link.onclick = (e) => { e.preventDefault(); openPlans(); };
 }
 
 // --- auth ---
@@ -128,8 +147,8 @@ async function sendMessage(e) {
   } catch (err) {
     thinking.remove();
     if (err.status === 402) {
-      if (err.data?.needsSubscription) $('subModal').classList.remove('hidden');
-      else addMessage('bot', err.message);
+      addMessage('bot', err.message);
+      if (err.data?.needsSubscription) openPlans();
     } else {
       addMessage('bot', `⚠️ ${err.message}`);
     }
@@ -137,9 +156,35 @@ async function sendMessage(e) {
 }
 
 // --- subscribe ---
-async function subscribe() {
+async function openPlans() {
+  const list = $('planList');
+  list.innerHTML = '<p>Loading plans…</p>';
+  $('subModal').classList.remove('hidden');
   try {
-    const { url } = await api('/api/checkout', { method: 'POST' });
+    const { stripeEnabled, plans } = await api('/api/plans', { auth: false });
+    if (!stripeEnabled || !plans.length) {
+      list.innerHTML = '<p>Subscriptions aren\'t available yet. Please check back soon.</p>';
+      return;
+    }
+    list.innerHTML = '';
+    for (const p of plans) {
+      const card = document.createElement('button');
+      card.className = 'plan-card';
+      card.innerHTML =
+        `<span class="plan-name">${p.label}</span>` +
+        `<span class="plan-price">${p.priceText}</span>` +
+        `<span class="plan-blurb">${p.blurb} · ${p.limit} msgs/mo</span>`;
+      card.onclick = () => subscribe(p.key);
+      list.appendChild(card);
+    }
+  } catch (err) {
+    list.innerHTML = `<p class="error">${err.message}</p>`;
+  }
+}
+
+async function subscribe(plan) {
+  try {
+    const { url } = await api('/api/checkout', { method: 'POST', body: { plan } });
     window.location.href = url;
   } catch (err) {
     alert(err.message);
@@ -153,7 +198,6 @@ $('authSubmit').onclick = submitAuth;
 $('authClose').onclick = closeAuth;
 $('switchLink').onclick = (e) => { e.preventDefault(); openAuth(state.authMode === 'register' ? 'login' : 'register'); };
 $('composer').addEventListener('submit', sendMessage);
-$('subscribeBtn').onclick = subscribe;
 $('subClose').onclick = () => $('subModal').classList.add('hidden');
 
 // Enter to send, Shift+Enter for newline; auto-grow textarea.

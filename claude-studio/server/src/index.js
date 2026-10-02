@@ -3,7 +3,15 @@ import cors from 'cors';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
-import { config, stripeEnabled } from './config.js';
+import {
+  config,
+  stripeEnabled,
+  modelFor,
+  PLANS,
+  planOf,
+  purchasablePlans,
+  trialStatus,
+} from './config.js';
 import { Users, Files } from './db.js';
 import {
   hashPassword,
@@ -12,7 +20,7 @@ import {
   signToken,
   requireAuth,
 } from './auth.js';
-import { runAssistant } from './claude.js';
+import { runAssistant } from './ai.js';
 import { createCheckoutSession, handleWebhook } from './stripe.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -38,17 +46,18 @@ app.post('/webhook/stripe', express.raw({ type: 'application/json' }), (req, res
 
 app.use(express.json({ limit: '1mb' }));
 
-function planLimit(user) {
-  return user.subscription_status === 'active' ? config.proMonthlyLimit : config.freeMonthlyLimit;
-}
-
 function publicUser(user) {
   const used = Users.usageThisMonth(user);
+  const plan = planOf(user);
+  const trial = plan.key === 'free' ? trialStatus(user) : { active: true, endsAt: null };
   return {
     email: user.email,
-    subscription: user.subscription_status,
+    plan: plan.key,
+    planLabel: plan.label,
     usedThisMonth: used,
-    monthlyLimit: planLimit(user),
+    monthlyLimit: plan.limit,
+    trialActive: trial.active,
+    trialEndsAt: trial.endsAt,
     stripeEnabled,
   };
 }
@@ -83,20 +92,36 @@ app.post('/api/chat', requireAuth, async (req, res) => {
   if (!message) return res.status(400).json({ error: 'Message is empty.' });
 
   const used = Users.usageThisMonth(req.user);
-  const limit = planLimit(req.user);
-  if (used >= limit) {
-    const needsSub = req.user.subscription_status !== 'active';
+  const plan = planOf(req.user);
+  const canUpgrade = plan.key !== 'pro' && purchasablePlans().length > 0;
+
+  // Free trial has ended -> upgrade required to keep creating.
+  if (plan.key === 'free' && !trialStatus(req.user).active) {
     return res.status(402).json({
-      error: needsSub
-        ? 'You have used all your free messages. Subscribe to keep going.'
+      error: `Your ${config.freeTrialDays}-day free trial has ended. Upgrade to keep creating.`,
+      needsSubscription: canUpgrade,
+    });
+  }
+
+  // Message cap (protects your bill / free quota).
+  if (used >= plan.limit) {
+    return res.status(402).json({
+      error: canUpgrade
+        ? `You've used all ${plan.limit} messages on the ${plan.label} plan. Upgrade to keep going.`
         : "You've reached this month's message limit.",
-      needsSubscription: needsSub,
+      needsSubscription: canUpgrade,
     });
   }
 
   try {
     const history = conversations.get(req.user.id) || [];
-    const { reply, files, newHistory } = await runAssistant(req.user.id, history, message);
+    // Each plan is served by its configured provider (e.g. Pro -> Groq/Claude).
+    const { reply, files, newHistory } = await runAssistant(
+      req.user.id,
+      history,
+      message,
+      plan.provider
+    );
     conversations.set(req.user.id, newHistory);
     Users.incrementUsage(req.user.id);
 
@@ -128,13 +153,31 @@ app.get('/api/files/:id', requireAuth, (req, res) => {
   res.send(file.content);
 });
 
+// ---------- Plans (public) ----------
+app.get('/api/plans', (req, res) => {
+  res.json({
+    stripeEnabled,
+    plans: purchasablePlans().map((p) => ({
+      key: p.key,
+      label: p.label,
+      priceText: p.priceText,
+      blurb: p.blurb,
+      limit: p.limit,
+    })),
+  });
+});
+
 // ---------- Subscription checkout ----------
 app.post('/api/checkout', requireAuth, async (req, res) => {
   if (!stripeEnabled) {
     return res.status(400).json({ error: 'Payments are not set up yet.' });
   }
+  const plan = (req.body?.plan || '').toString();
+  if (!PLANS[plan] || !PLANS[plan].priceId) {
+    return res.status(400).json({ error: 'Please choose a valid plan.' });
+  }
   try {
-    const url = await createCheckoutSession(req.user);
+    const url = await createCheckoutSession(req.user, plan);
     res.json({ url });
   } catch (err) {
     console.error('[checkout] error:', err.message);
@@ -147,5 +190,9 @@ app.use(express.static(join(__dirname, '..', 'public')));
 
 app.listen(config.port, () => {
   console.log(`Claude Studio running at ${config.publicUrl} (port ${config.port})`);
-  console.log(`Model: ${config.claudeModel} | Stripe: ${stripeEnabled ? 'on' : 'OFF (free mode)'}`);
+  console.log(
+    `Free users: ${config.freeProvider} (${modelFor(config.freeProvider)}) | ` +
+      `Paid users: ${config.paidProvider} (${modelFor(config.paidProvider)}) | ` +
+      `Stripe: ${stripeEnabled ? 'on' : 'OFF (free mode)'}`
+  );
 });

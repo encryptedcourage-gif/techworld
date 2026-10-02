@@ -137,6 +137,25 @@ body {
   padding: 12px 14px;
   font-size: 15px;
 }
+.plans { display: flex; flex-direction: column; gap: 10px; margin-top: 4px; }
+.plan-card {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  text-align: left;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px 16px;
+  color: var(--text);
+  cursor: pointer;
+  transition: border-color .15s ease, filter .15s ease;
+}
+.plan-card:hover { border-color: var(--accent); filter: brightness(1.08); }
+.plan-name { font-weight: 700; font-size: 16px; }
+.plan-price { color: var(--accent); font-weight: 700; font-size: 20px; }
+.plan-blurb { color: var(--muted); font-size: 13px; }
+
 .switch { font-size: 13px; }
 .switch a { color: var(--accent); }
 .error { color: #ff6b6b; font-size: 13px; }

@@ -25,30 +25,43 @@ services:
       mountPath: /data
       sizeGB: 1
     envVars:
-      # Your Anthropic API key — paste it in the Render dashboard (kept secret).
-      - key: ANTHROPIC_API_KEY
+      # Which AI serves free vs. paying users (gemini | groq | anthropic).
+      - key: AI_PROVIDER
+        value: gemini
+      - key: PAID_AI_PROVIDER
+        value: groq
+      # Free API keys — paste them in the Render dashboard (kept secret).
+      # Gemini: https://aistudio.google.com   Groq: https://console.groq.com
+      - key: GEMINI_API_KEY
         sync: false
-      - key: CLAUDE_MODEL
-        value: claude-sonnet-5-5
+      - key: GROQ_API_KEY
+        sync: false
       # A strong login-signing secret is generated for you.
       - key: JWT_SECRET
         generateValue: true
       # Store the database on the persistent disk mounted above.
       - key: DB_PATH
         value: /data/studio.db
-      # Free-trial size and subscriber monthly cap (protects your bill).
+      # Free trial length and message caps (protects your bill).
+      - key: FREE_TRIAL_DAYS
+        value: "1"
       - key: FREE_MONTHLY_LIMIT
-        value: "5"
+        value: "25"
+      - key: BASIC_MONTHLY_LIMIT
+        value: "300"
       - key: PRO_MONTHLY_LIMIT
-        value: "1000"
+        value: "2000"
       # --- Fill these in the dashboard once your site URL and Stripe exist ---
       # PUBLIC_URL: set to the https URL Render gives you after first deploy.
       - key: PUBLIC_URL
         sync: false
       # Stripe — leave unset to launch in FREE mode; add later to take payments.
+      # Create two monthly Prices in Stripe: $10 (Basic) and $20 (Pro).
       - key: STRIPE_SECRET_KEY
         sync: false
-      - key: STRIPE_PRICE_ID
-        sync: false
       - key: STRIPE_WEBHOOK_SECRET
+        sync: false
+      - key: STRIPE_PRICE_BASIC
+        sync: false
+      - key: STRIPE_PRICE_PRO
         sync: false

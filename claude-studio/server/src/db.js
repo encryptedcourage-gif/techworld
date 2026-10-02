@@ -13,6 +13,7 @@ db.exec(`
     id                 INTEGER PRIMARY KEY AUTOINCREMENT,
     email              TEXT UNIQUE NOT NULL,
     password_hash      TEXT NOT NULL,
+    plan               TEXT NOT NULL DEFAULT 'free',    -- 'free' | 'basic' | 'pro'
     subscription_status TEXT NOT NULL DEFAULT 'free',  -- 'free' | 'active' | 'canceled'
     stripe_customer_id TEXT,
     usage_count        INTEGER NOT NULL DEFAULT 0,
@@ -28,6 +29,12 @@ db.exec(`
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
 `);
+
+// Safe migration for databases created before the "plan" column existed.
+const cols = db.prepare('PRAGMA table_info(users)').all().map((c) => c.name);
+if (!cols.includes('plan')) {
+  db.exec("ALTER TABLE users ADD COLUMN plan TEXT NOT NULL DEFAULT 'free'");
+}
 
 const currentMonth = () => new Date().toISOString().slice(0, 7); // 'YYYY-MM'
 
@@ -52,6 +59,9 @@ export const Users = {
   },
   setSubscription(id, status) {
     db.prepare('UPDATE users SET subscription_status = ? WHERE id = ?').run(status, id);
+  },
+  setPlan(id, plan) {
+    db.prepare('UPDATE users SET plan = ? WHERE id = ?').run(plan, id);
   },
 
   // Returns the up-to-date usage count for this month, resetting at month change.
