@@ -1,0 +1,54 @@
+# Render Blueprint for Claude Studio (the public AI assistant site).
+#
+# Easiest path is the manual setup in DEPLOY.md (no blueprint needed).
+# If you prefer one-click: copy this file's `services:` block into the
+# render.yaml at the REPOSITORY ROOT (Render only reads the root one), then in
+# Render: New + -> Blueprint -> connect this repo -> pick your branch -> Apply.
+#
+# Docs: https://render.com/docs/blueprint-spec
+
+services:
+  - type: web
+    name: claude-studio
+    runtime: node
+    # Free plan has NO persistent disk, so the accounts database would reset on
+    # every restart. "starter" (~$7/mo) supports the disk below. Use "free"
+    # only for throwaway testing.
+    plan: starter
+    region: oregon
+    rootDir: claude-studio/server
+    buildCommand: npm install
+    startCommand: npm start
+    # Keeps the SQLite accounts/files database across restarts and deploys.
+    disk:
+      name: studio-data
+      mountPath: /data
+      sizeGB: 1
+    envVars:
+      # Your Anthropic API key — paste it in the Render dashboard (kept secret).
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: CLAUDE_MODEL
+        value: claude-sonnet-5-5
+      # A strong login-signing secret is generated for you.
+      - key: JWT_SECRET
+        generateValue: true
+      # Store the database on the persistent disk mounted above.
+      - key: DB_PATH
+        value: /data/studio.db
+      # Free-trial size and subscriber monthly cap (protects your bill).
+      - key: FREE_MONTHLY_LIMIT
+        value: "5"
+      - key: PRO_MONTHLY_LIMIT
+        value: "1000"
+      # --- Fill these in the dashboard once your site URL and Stripe exist ---
+      # PUBLIC_URL: set to the https URL Render gives you after first deploy.
+      - key: PUBLIC_URL
+        sync: false
+      # Stripe — leave unset to launch in FREE mode; add later to take payments.
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: STRIPE_PRICE_ID
+        sync: false
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false
