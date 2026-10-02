@@ -1,0 +1,245 @@
+import express from 'express';
+import cors from 'cors';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
+import { config } from './config.js';
+import { Users, Plans, Conversations, Messages } from './db.js';
+import {
+  hashPassword,
+  verifyPassword,
+  signToken,
+  requireAuth,
+  requireAdmin,
+  validateCredentials,
+  publicUser,
+} from './auth.js';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+
+// --- Seed the first admin account on first launch -----------------------
+(function seedAdmin() {
+  const existing = Users.byEmail(config.adminEmail);
+  if (!existing) {
+    Users.create({
+      email: config.adminEmail,
+      passwordHash: hashPassword(config.adminPassword),
+      role: 'admin',
+      name: config.adminName,
+    });
+    console.log(`[seed] Created admin account: ${config.adminEmail}`);
+  } else if (existing.role !== 'admin') {
+    console.warn(`[seed] ${config.adminEmail} exists but is not an admin.`);
+  }
+})();
+
+const app = express();
+app.use(cors());
+app.use(express.json({ limit: '1mb' }));
+
+const money = (p) => ({
+  id: p.id,
+  name: p.name,
+  description: p.description,
+  priceCents: p.price_cents,
+  currency: p.currency,
+  period: p.period,
+  active: !!p.active,
+  sortOrder: p.sort_order,
+});
+
+const msgOut = (m) => ({ id: m.id, role: m.sender_role, body: m.body, createdAt: m.created_at });
+
+// ======================= Public =======================
+
+app.get('/api/health', (_req, res) => res.json({ ok: true }));
+
+app.get('/api/config', (_req, res) => res.json({ siteName: config.siteName }));
+
+// Public plan list — anyone with the link sees the plans the admin set up.
+app.get('/api/plans', (_req, res) => {
+  res.json({ plans: Plans.active().map(money) });
+});
+
+// Login (members use the credentials the admin created for them; admin too).
+app.post('/api/login', (req, res) => {
+  const email = String(req.body?.email || '').trim().toLowerCase();
+  const password = String(req.body?.password || '');
+  const user = Users.byEmail(email);
+  if (!user || !verifyPassword(password, user.password_hash)) {
+    return res.status(401).json({ error: 'Wrong email or password.' });
+  }
+  res.json({ token: signToken(user), user: publicUser(user) });
+});
+
+// ======================= Member =======================
+
+app.get('/api/me', requireAuth, (req, res) => res.json({ user: publicUser(req.user) }));
+
+// Click "Buy": make sure this member's conversation exists and drop in a
+// message naming the plan, so the admin knows what they want.
+app.post('/api/buy', requireAuth, (req, res) => {
+  if (req.user.role !== 'member') return res.status(400).json({ error: 'Admins do not buy plans.' });
+  const plan = Plans.byId(Number(req.body?.planId));
+  if (!plan || !plan.active) return res.status(404).json({ error: 'Plan not found.' });
+
+  const conv = Conversations.ensureForMember(req.user.id);
+  const price = `${(plan.price_cents / 100).toFixed(2)} ${plan.currency}`;
+  const per = plan.period === 'month' ? '/month' : ' one-time';
+  Messages.add({
+    conversationId: conv.id,
+    senderRole: 'member',
+    body: `Hi! I'd like to buy the "${plan.name}" plan (${price}${per}). Please help me get set up with my Claude.ai subscription.`,
+  });
+  res.json({ ok: true, conversationId: conv.id });
+});
+
+// The member's own conversation + messages (persists across logins/restarts).
+app.get('/api/conversation', requireAuth, (req, res) => {
+  if (req.user.role !== 'member') return res.status(400).json({ error: 'Admins use the inbox.' });
+  const conv = Conversations.ensureForMember(req.user.id);
+  const since = Number(req.query.since || 0);
+  if (!since) Conversations.markReadByMember(conv.id);
+  res.json({
+    conversationId: conv.id,
+    messages: Messages.list(conv.id, since).map(msgOut),
+    unread: Conversations.byId(conv.id).member_unread,
+  });
+});
+
+app.post('/api/conversation/messages', requireAuth, (req, res) => {
+  if (req.user.role !== 'member') return res.status(400).json({ error: 'Admins reply from the inbox.' });
+  const body = String(req.body?.body || '').trim();
+  if (!body) return res.status(400).json({ error: 'Message is empty.' });
+  if (body.length > 4000) return res.status(400).json({ error: 'Message is too long.' });
+  const conv = Conversations.ensureForMember(req.user.id);
+  const m = Messages.add({ conversationId: conv.id, senderRole: 'member', body });
+  res.json({ message: msgOut(m) });
+});
+
+// Let the member poll for how many unread admin replies they have.
+app.get('/api/conversation/unread', requireAuth, (req, res) => {
+  if (req.user.role !== 'member') return res.json({ unread: 0 });
+  const conv = Conversations.ensureForMember(req.user.id);
+  res.json({ unread: conv.member_unread });
+});
+
+// ======================= Admin =======================
+
+// Members management
+app.get('/api/admin/members', requireAdmin, (_req, res) => {
+  res.json({ members: Users.members().map(publicUser) });
+});
+
+app.post('/api/admin/members', requireAdmin, (req, res) => {
+  const email = String(req.body?.email || '').trim().toLowerCase();
+  const password = String(req.body?.password || '');
+  const name = String(req.body?.name || '').trim();
+  const err = validateCredentials(email, password);
+  if (err) return res.status(400).json({ error: err });
+  if (Users.byEmail(email)) return res.status(409).json({ error: 'That email already has an account.' });
+  const member = Users.create({ email, passwordHash: hashPassword(password), role: 'member', name });
+  Conversations.ensureForMember(member.id); // so the thread exists from day one
+  res.json({ member: publicUser(member) });
+});
+
+// Reset a member's password (admin issues credentials).
+app.post('/api/admin/members/:id/password', requireAdmin, (req, res) => {
+  const member = Users.byId(Number(req.params.id));
+  if (!member || member.role !== 'member') return res.status(404).json({ error: 'Member not found.' });
+  const password = String(req.body?.password || '');
+  if (password.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters.' });
+  Users.setPassword(member.id, hashPassword(password));
+  res.json({ ok: true });
+});
+
+app.delete('/api/admin/members/:id', requireAdmin, (req, res) => {
+  const member = Users.byId(Number(req.params.id));
+  if (!member || member.role !== 'member') return res.status(404).json({ error: 'Member not found.' });
+  Users.remove(member.id);
+  res.json({ ok: true });
+});
+
+// Plans management
+app.get('/api/admin/plans', requireAdmin, (_req, res) => {
+  res.json({ plans: Plans.all().map(money) });
+});
+
+app.post('/api/admin/plans', requireAdmin, (req, res) => {
+  const name = String(req.body?.name || '').trim();
+  if (!name) return res.status(400).json({ error: 'Plan needs a name.' });
+  const plan = Plans.create({
+    name,
+    description: String(req.body?.description || '').trim(),
+    priceCents: Math.max(0, Math.round(Number(req.body?.priceCents) || 0)),
+    currency: String(req.body?.currency || 'USD').trim().toUpperCase().slice(0, 3),
+    period: req.body?.period === 'once' ? 'once' : 'month',
+    sortOrder: Math.round(Number(req.body?.sortOrder) || 0),
+  });
+  res.json({ plan: money(plan) });
+});
+
+app.put('/api/admin/plans/:id', requireAdmin, (req, res) => {
+  const plan = Plans.update(Number(req.params.id), {
+    name: req.body?.name != null ? String(req.body.name).trim() : undefined,
+    description: req.body?.description != null ? String(req.body.description).trim() : undefined,
+    priceCents: req.body?.priceCents != null ? Math.max(0, Math.round(Number(req.body.priceCents))) : undefined,
+    currency: req.body?.currency != null ? String(req.body.currency).toUpperCase().slice(0, 3) : undefined,
+    period: req.body?.period != null ? (req.body.period === 'once' ? 'once' : 'month') : undefined,
+    active: req.body?.active != null ? !!req.body.active : undefined,
+    sortOrder: req.body?.sortOrder != null ? Math.round(Number(req.body.sortOrder)) : undefined,
+  });
+  if (!plan) return res.status(404).json({ error: 'Plan not found.' });
+  res.json({ plan: money(plan) });
+});
+
+app.delete('/api/admin/plans/:id', requireAdmin, (req, res) => {
+  if (!Plans.byId(Number(req.params.id))) return res.status(404).json({ error: 'Plan not found.' });
+  Plans.remove(Number(req.params.id));
+  res.json({ ok: true });
+});
+
+// Inbox: every member conversation, newest activity first.
+app.get('/api/admin/conversations', requireAdmin, (_req, res) => {
+  res.json({
+    conversations: Conversations.listForAdmin().map((c) => ({
+      id: c.id,
+      memberId: c.member_id,
+      memberEmail: c.member_email,
+      memberName: c.member_name,
+      lastBody: c.last_body,
+      lastAt: c.last_at,
+      unread: c.admin_unread,
+      updatedAt: c.updated_at,
+    })),
+    totalUnread: Conversations.totalAdminUnread(),
+  });
+});
+
+app.get('/api/admin/conversations/:id/messages', requireAdmin, (req, res) => {
+  const conv = Conversations.byId(Number(req.params.id));
+  if (!conv) return res.status(404).json({ error: 'Conversation not found.' });
+  const since = Number(req.query.since || 0);
+  if (!since) Conversations.markReadByAdmin(conv.id);
+  res.json({ messages: Messages.list(conv.id, since).map(msgOut) });
+});
+
+app.post('/api/admin/conversations/:id/messages', requireAdmin, (req, res) => {
+  const conv = Conversations.byId(Number(req.params.id));
+  if (!conv) return res.status(404).json({ error: 'Conversation not found.' });
+  const body = String(req.body?.body || '').trim();
+  if (!body) return res.status(400).json({ error: 'Message is empty.' });
+  if (body.length > 4000) return res.status(400).json({ error: 'Message is too long.' });
+  Conversations.markReadByAdmin(conv.id);
+  const m = Messages.add({ conversationId: conv.id, senderRole: 'admin', body });
+  res.json({ message: msgOut(m) });
+});
+
+// ======================= Static site =======================
+app.use(express.static(join(__dirname, '..', 'public')));
+
+app.listen(config.port, () => {
+  console.log(`\n  ${config.siteName} running at http://localhost:${config.port}`);
+  console.log(`  Admin login: ${config.adminEmail}`);
+  console.log(`  Database:    ${config.dbPath} (logins + messages persist here)\n`);
+  console.log(`  To share a public link, run:  npm run public\n`);
+});
