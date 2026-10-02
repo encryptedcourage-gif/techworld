@@ -1,14 +1,15 @@
-// Starts the marketplace server AND a Cloudflare "quick tunnel" so anyone with
-// the printed https://<random>.trycloudflare.com link can reach it — no
-// Cloudflare account, no domain, no config needed.
+// Starts the marketplace server AND two separate Cloudflare "quick tunnels":
+//   • a CLIENT link  (the customer-facing site) — share this
+//   • an ADMIN link  (your control panel) — keep this private
 //
 //   npm run public
 //
-// The tunnel auto-reconnects, so when the laptop wakes from sleep the public
-// link keeps working. (Quick-tunnel URLs are random and change if cloudflared
-// fully restarts; the README explains how to pin a permanent URL if you want
-// one.) Member logins and messages live in the on-disk database either way, so
-// they always survive a restart or sleep.
+// Each link is its own random *.trycloudflare.com hostname. Because the admin
+// panel lives on a different tunnel (a URL customers never receive) and its
+// sign-in rejects customer accounts, the admin side stays separate and safer.
+// Both tunnels auto-reconnect, so the links keep working when the laptop wakes
+// from sleep. Member logins and messages live in the on-disk database, so they
+// always survive a restart or sleep.
 
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -16,81 +17,76 @@ import { dirname, join } from 'node:path';
 import { config } from './config.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const PORT = config.port;
 
 function hasCloudflared() {
-  const probe = spawnSync('cloudflared', ['--version'], { stdio: 'ignore' });
-  return !probe.error;
+  return !spawnSync('cloudflared', ['--version'], { stdio: 'ignore' }).error;
 }
 
 function printInstallHelp() {
   console.error(`
   cloudflared is not installed. Install it, then run "npm run public" again:
 
-    macOS:         brew install cloudflared
-    Windows:       winget install --id Cloudflare.cloudflared
-    Linux (deb):   https://pkg.cloudflare.com/  (or download the binary below)
-    Any system:    https://github.com/cloudflare/cloudflared/releases/latest
+    macOS:    brew install cloudflared
+    Windows:  winget install --id Cloudflare.cloudflared
+    Linux:    https://github.com/cloudflare/cloudflared/releases/latest
 
-  The server is still running locally at http://localhost:${PORT}
+  The sites still run locally:
+    CLIENT  http://localhost:${config.port}
+    ADMIN   http://localhost:${config.adminPort}
 `);
 }
 
-// 1) Start the app server.
+// 1) Start the app server (listens on both the client and admin ports).
 const server = spawn(process.execPath, [join(__dirname, 'index.js')], {
   stdio: 'inherit',
   env: process.env,
 });
 server.on('exit', (code) => {
   console.error(`\n[tunnel] server exited (code ${code}). Shutting down.`);
-  if (tunnel) tunnel.kill();
+  tunnels.forEach((t) => t.proc && t.proc.kill());
   process.exit(code ?? 0);
 });
 
-// 2) Start (and keep alive) the Cloudflare quick tunnel.
-let tunnel = null;
-let lastUrl = null;
+// 2) Two quick tunnels, each kept alive independently.
+const tunnels = [
+  { label: 'CLIENT LINK (share with customers)', port: config.port, url: null, proc: null },
+  { label: 'ADMIN LINK  (keep private — your control panel)', port: config.adminPort, url: null, proc: null },
+];
 
-function startTunnel() {
-  if (!hasCloudflared()) {
-    printInstallHelp();
-    return;
+function banner() {
+  const ready = tunnels.filter((t) => t.url);
+  if (!ready.length) return;
+  console.log('\n  ============================================================');
+  for (const t of tunnels) {
+    console.log(`    ${t.label}`);
+    console.log(`      ${t.url || '(connecting…)'}\n`);
   }
-  tunnel = spawn(
-    'cloudflared',
-    ['tunnel', '--no-autoupdate', '--url', `http://localhost:${PORT}`],
-    { env: process.env }
-  );
+  console.log('  ============================================================\n');
+}
 
+function start(t) {
+  if (!hasCloudflared()) { printInstallHelp(); return; }
+  t.proc = spawn('cloudflared', ['tunnel', '--no-autoupdate', '--url', `http://localhost:${t.port}`], {
+    env: process.env,
+  });
   const scan = (buf) => {
-    const text = buf.toString();
-    const m = text.match(/https:\/\/[a-z0-9-]+\.trycloudflare\.com/i);
-    if (m && m[0] !== lastUrl) {
-      lastUrl = m[0];
-      console.log(`
-  ============================================================
-    PUBLIC LINK (share this):  ${lastUrl}
-    Admin signs in there too.  Local: http://localhost:${PORT}
-  ============================================================
-`);
-    }
+    const m = buf.toString().match(/https:\/\/[a-z0-9-]+\.trycloudflare\.com/i);
+    if (m && m[0] !== t.url) { t.url = m[0]; banner(); }
   };
-  tunnel.stdout.on('data', scan);
-  tunnel.stderr.on('data', scan); // cloudflared prints the URL to stderr
-
-  tunnel.on('exit', (code) => {
-    console.error(`[tunnel] cloudflared exited (code ${code}). Reconnecting in 3s...`);
-    lastUrl = null;
-    tunnel = null;
-    setTimeout(startTunnel, 3000); // auto-recover after sleep/network drop
+  t.proc.stdout.on('data', scan);
+  t.proc.stderr.on('data', scan);
+  t.proc.on('exit', (code) => {
+    console.error(`[tunnel] ${t.label} dropped (code ${code}). Reconnecting in 3s...`);
+    t.url = null;
+    t.proc = null;
+    setTimeout(() => start(t), 3000);
   });
 }
 
-// Give the server a moment to bind the port, then open the tunnel.
-setTimeout(startTunnel, 1500);
+setTimeout(() => tunnels.forEach(start), 1500); // let the server bind first
 
 function shutdown() {
-  if (tunnel) tunnel.kill();
+  tunnels.forEach((t) => t.proc && t.proc.kill());
   if (server) server.kill();
   process.exit(0);
 }

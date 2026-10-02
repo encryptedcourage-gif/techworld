@@ -15,7 +15,6 @@
 
     <main id="app"></main>
 
-    <!-- Templates are cloned by app.js -->
     <template id="tpl-public">
       <section class="hero">
         <h1>Get set up on <span>Claude.ai</span> — the easy way</h1>
@@ -44,7 +43,6 @@
       </section>
     </template>
 
-    <!-- Member dashboard -->
     <template id="tpl-member">
       <div class="layout">
         <section class="panel">
@@ -61,74 +59,6 @@
           </form>
         </section>
       </div>
-    </template>
-
-    <!-- Admin dashboard -->
-    <template id="tpl-admin">
-      <nav class="tabs">
-        <button class="tab active" data-tab="inbox">Inbox <span class="badge" id="inboxBadge" hidden>0</span></button>
-        <button class="tab" data-tab="plans">Plans</button>
-        <button class="tab" data-tab="members">Members</button>
-      </nav>
-
-      <section class="tab-page" data-page="inbox">
-        <div class="layout">
-          <aside class="panel conv-list" id="convList"></aside>
-          <section class="panel chat-panel">
-            <h2 id="convTitle">Select a conversation</h2>
-            <div class="chat" id="adminChat"></div>
-            <form class="composer" id="adminComposer" hidden>
-              <input type="text" id="adminInput" placeholder="Reply to this member…" autocomplete="off" />
-              <button class="primary" type="submit">Send</button>
-            </form>
-          </section>
-        </div>
-      </section>
-
-      <section class="tab-page" data-page="plans" hidden>
-        <div class="panel">
-          <h2>Subscription plans</h2>
-          <p class="muted small">These show on the public page. Members click Buy to start a chat with you.</p>
-          <form class="plan-form" id="planForm">
-            <input type="hidden" id="planId" />
-            <div class="row">
-              <label>Name<input id="planName" placeholder="Claude Pro" required /></label>
-              <label>Price<input id="planPrice" type="number" min="0" step="0.01" placeholder="20.00" required /></label>
-              <label>Currency<input id="planCurrency" value="USD" maxlength="3" /></label>
-              <label>Billing
-                <select id="planPeriod">
-                  <option value="month">Monthly</option>
-                  <option value="once">One-time</option>
-                </select>
-              </label>
-            </div>
-            <label>Description<textarea id="planDesc" placeholder="What the member gets…"></textarea></label>
-            <div class="row">
-              <button class="primary" type="submit" id="planSubmit">Add plan</button>
-              <button type="button" class="ghost" id="planReset" hidden>Cancel edit</button>
-            </div>
-            <p class="error" id="planError"></p>
-          </form>
-          <div class="admin-plans" id="adminPlans"></div>
-        </div>
-      </section>
-
-      <section class="tab-page" data-page="members" hidden>
-        <div class="panel">
-          <h2>Members</h2>
-          <p class="muted small">You create every member account. Give them the email + password to sign in.</p>
-          <form class="member-form" id="memberForm">
-            <div class="row">
-              <label>Name<input id="newName" placeholder="Jane Doe" /></label>
-              <label>Email<input id="newEmail" type="email" placeholder="jane@email.com" required /></label>
-              <label>Password<input id="newPassword" placeholder="at least 6 characters" required /></label>
-            </div>
-            <button class="primary" type="submit">Create member</button>
-            <p class="error" id="memberError"></p>
-          </form>
-          <div class="member-list" id="memberList"></div>
-        </div>
-      </section>
     </template>
 
     <script src="app.js"></script>

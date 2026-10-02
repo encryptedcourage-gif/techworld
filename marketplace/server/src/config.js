@@ -3,7 +3,11 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 export const config = {
+  // Client-facing site (the link you share with customers).
   port: Number(process.env.PORT || 8080),
+  // Admin site — a SEPARATE port on its own tunnel, so the admin link is a
+  // different URL that customers never see.
+  adminPort: Number(process.env.ADMIN_PORT || 8787),
   siteName: process.env.SITE_NAME || 'Claude Marketplace',
 
   // The database file. On-disk + WAL (see db.js) is what makes logins and
