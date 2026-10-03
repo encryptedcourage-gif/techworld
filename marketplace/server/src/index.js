@@ -103,7 +103,6 @@ clientApp.post('/api/buy', requireAuth, (req, res) => {
   const plan = Plans.byId(Number(req.body?.planId));
   if (!plan || !plan.active) return res.status(404).json({ error: 'Plan not found.' });
   const conv = Conversations.ensureForMember(req.user.id);
-  maybeSendWelcome(conv); // make sure the greeting sits above their buy request
   const price = `${(plan.price_cents / 100).toFixed(2)} ${plan.currency}`;
   const per = plan.period === 'month' ? '/month' : ' one-time';
   Messages.add({
@@ -111,13 +110,13 @@ clientApp.post('/api/buy', requireAuth, (req, res) => {
     senderRole: 'member',
     body: `Hi! I'd like to buy the "${plan.name}" plan (${price}${per}). Please help me get set up with my Claude.ai subscription.`,
   });
+  maybeSendWelcome(conv); // auto-reply with the next-steps you wrote
   res.json({ ok: true, conversationId: conv.id });
 });
 
 clientApp.get('/api/conversation', requireAuth, (req, res) => {
   if (req.user.role !== 'member') return res.status(400).json({ error: 'Admins use the admin inbox.' });
   const conv = Conversations.ensureForMember(req.user.id);
-  maybeSendWelcome(conv); // auto-greet on first sign-in / open
   const since = Number(req.query.since || 0);
   if (!since) Conversations.markReadByMember(conv.id);
   res.json({
@@ -133,7 +132,9 @@ clientApp.post('/api/conversation/messages', requireAuth, (req, res) => {
   if (!body) return res.status(400).json({ error: 'Message is empty.' });
   if (body.length > 4000) return res.status(400).json({ error: 'Message is too long.' });
   const conv = Conversations.ensureForMember(req.user.id);
-  res.json({ message: msgOut(Messages.add({ conversationId: conv.id, senderRole: 'member', body })) });
+  const m = Messages.add({ conversationId: conv.id, senderRole: 'member', body });
+  maybeSendWelcome(conv); // first time they write, auto-reply with the next-steps you wrote
+  res.json({ message: msgOut(m) });
 });
 
 clientApp.use(express.static(PUBLIC_DIR)); // serves client index.html + app.js + styles.css
