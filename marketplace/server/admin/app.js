@@ -46,6 +46,25 @@ const timeStr = (iso) => {
 const tpl = (id) => $(`#${id}`).content.cloneNode(true);
 const stopPolling = () => { if (state.pollTimer) { clearInterval(state.pollTimer); state.pollTimer = null; } };
 
+// Built-in Claude-style sunburst, shown when no custom logo is uploaded.
+function defaultLogoEl() {
+  const NS = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(NS, 'svg');
+  svg.setAttribute('viewBox', '0 0 48 48');
+  svg.setAttribute('class', 'brand-logo');
+  svg.setAttribute('aria-hidden', 'true');
+  const g = document.createElementNS(NS, 'g');
+  g.setAttribute('fill', '#d97757');
+  for (let i = 0; i < 12; i++) {
+    const ray = document.createElementNS(NS, 'path');
+    ray.setAttribute('d', 'M24 4 L25.3 24 L22.7 24 Z');
+    ray.setAttribute('transform', `rotate(${i * 30} 24 24)`);
+    g.appendChild(ray);
+  }
+  svg.appendChild(g);
+  return svg;
+}
+
 function setBrand(c) {
   const name = c.businessName || c.siteName || 'Claude Marketplace';
   document.title = 'Admin · ' + name;
@@ -55,6 +74,8 @@ function setBrand(c) {
     const img = document.createElement('img');
     img.src = c.logo; img.alt = ''; img.className = 'brand-logo';
     brand.append(img);
+  } else {
+    brand.append(defaultLogoEl());
   }
   const span = document.createElement('span');
   span.textContent = 'Admin · ' + name;
