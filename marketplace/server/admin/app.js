@@ -46,8 +46,23 @@ const timeStr = (iso) => {
 const tpl = (id) => $(`#${id}`).content.cloneNode(true);
 const stopPolling = () => { if (state.pollTimer) { clearInterval(state.pollTimer); state.pollTimer = null; } };
 
+function setBrand(c) {
+  const name = c.businessName || c.siteName || 'Claude Marketplace';
+  document.title = 'Admin · ' + name;
+  const brand = $('#brand');
+  brand.innerHTML = '';
+  if (c.logo) {
+    const img = document.createElement('img');
+    img.src = c.logo; img.alt = ''; img.className = 'brand-logo';
+    brand.append(img);
+  }
+  const span = document.createElement('span');
+  span.textContent = 'Admin · ' + name;
+  brand.append(span);
+}
+
 async function renderTop() {
-  try { const c = await api('/api/config'); $('#brand').textContent = 'Admin · ' + c.siteName; } catch {}
+  try { setBrand(await api('/api/config')); } catch {}
   topActions.innerHTML = '';
   if (state.user) {
     const who = document.createElement('span');
@@ -94,6 +109,7 @@ function renderAdmin() {
       if (tab === 'plans') loadAdminPlans();
       if (tab === 'members') loadMembers();
       if (tab === 'inbox') loadConversations();
+      if (tab === 'settings') loadSettings();
     };
   });
 
@@ -113,6 +129,10 @@ function renderAdmin() {
   $('#clearAllChats').onclick = clearAllChats;
   $('#clearChat').onclick = clearChat;
   $('#closeAccount').onclick = closeAccount;
+
+  $('#settingsForm').onsubmit = submitSettings;
+  $('#logoFile').onchange = onLogoFile;
+  $('#logoRemove').onclick = onLogoRemove;
 
   loadConversations();
   state.pollTimer = setInterval(() => {
@@ -325,6 +345,58 @@ async function submitMember(e) {
     $('#memberForm').reset();
     loadMembers();
   } catch (err) { $('#memberError').textContent = err.message; }
+}
+
+// --- Admin: branding + auto-welcome settings ---
+// pendingLogo: undefined = unchanged, '' = remove, data-URL string = new upload.
+let pendingLogo;
+
+async function loadSettings() {
+  $('#settingsError').textContent = '';
+  $('#settingsSaved').hidden = true;
+  pendingLogo = undefined;
+  try {
+    const s = await api('/api/admin/settings');
+    $('#bizName').value = s.businessName || '';
+    $('#welcomeMsg').value = s.welcomeMessage || '';
+    if (s.logo) { $('#logoImg').src = s.logo; $('#logoPreview').hidden = false; }
+    else { $('#logoPreview').hidden = true; $('#logoImg').removeAttribute('src'); }
+  } catch (e) { $('#settingsError').textContent = e.message; }
+}
+
+function onLogoFile(e) {
+  const f = e.target.files[0];
+  if (!f) return;
+  if (f.size > 1_500_000) { $('#settingsError').textContent = 'Logo is too big — pick an image under ~1.5 MB.'; e.target.value = ''; return; }
+  const reader = new FileReader();
+  reader.onload = () => {
+    pendingLogo = reader.result;
+    $('#logoImg').src = reader.result;
+    $('#logoPreview').hidden = false;
+    $('#settingsError').textContent = '';
+  };
+  reader.readAsDataURL(f);
+}
+
+function onLogoRemove() {
+  pendingLogo = '';
+  $('#logoPreview').hidden = true;
+  $('#logoImg').removeAttribute('src');
+  $('#logoFile').value = '';
+}
+
+async function submitSettings(e) {
+  e.preventDefault();
+  $('#settingsError').textContent = '';
+  $('#settingsSaved').hidden = true;
+  const body = { businessName: $('#bizName').value, welcomeMessage: $('#welcomeMsg').value };
+  if (pendingLogo !== undefined) body.logo = pendingLogo;
+  try {
+    await api('/api/admin/settings', { method: 'POST', body });
+    pendingLogo = undefined;
+    $('#settingsSaved').hidden = false;
+    renderTop(); // refresh the logo/name in the top bar right away
+  } catch (err) { $('#settingsError').textContent = err.message; }
 }
 
 function appendBubbles(chat, messages, myRole) {

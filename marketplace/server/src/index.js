@@ -3,7 +3,7 @@ import cors from 'cors';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { config } from './config.js';
-import { Users, Plans, Conversations, Messages } from './db.js';
+import { Users, Plans, Conversations, Messages, Settings } from './db.js';
 import {
   hashPassword,
   verifyPassword,
@@ -68,10 +68,27 @@ function loginHandler(roleRequired) {
 
 function common(app, { siteKind }) {
   app.use(cors());
-  app.use(express.json({ limit: '1mb' }));
+  app.use(express.json({ limit: '10mb' })); // room for an uploaded logo (sent as a data URL)
   app.get('/api/health', (_req, res) => res.json({ ok: true }));
-  app.get('/api/config', (_req, res) => res.json({ siteName: config.siteName, site: siteKind }));
+  app.get('/api/config', (_req, res) =>
+    res.json({
+      siteName: config.siteName,
+      businessName: Settings.get('business_name', config.siteName),
+      logo: Settings.get('logo', ''),
+      site: siteKind,
+    })
+  );
   app.get('/api/me', requireAuth, (req, res) => res.json({ user: publicUser(req.user) }));
+}
+
+// Post the admin's auto-welcome message into a conversation the first time
+// (once per member). Call this when the member opens their chat or buys.
+function maybeSendWelcome(conv) {
+  const welcome = Settings.get('welcome_message', '').trim();
+  if (welcome && !conv.welcomed) {
+    Messages.add({ conversationId: conv.id, senderRole: 'admin', body: welcome });
+    Conversations.markWelcomed(conv.id);
+  }
 }
 
 // ======================= CLIENT app (customers) =======================
@@ -86,6 +103,7 @@ clientApp.post('/api/buy', requireAuth, (req, res) => {
   const plan = Plans.byId(Number(req.body?.planId));
   if (!plan || !plan.active) return res.status(404).json({ error: 'Plan not found.' });
   const conv = Conversations.ensureForMember(req.user.id);
+  maybeSendWelcome(conv); // make sure the greeting sits above their buy request
   const price = `${(plan.price_cents / 100).toFixed(2)} ${plan.currency}`;
   const per = plan.period === 'month' ? '/month' : ' one-time';
   Messages.add({
@@ -99,6 +117,7 @@ clientApp.post('/api/buy', requireAuth, (req, res) => {
 clientApp.get('/api/conversation', requireAuth, (req, res) => {
   if (req.user.role !== 'member') return res.status(400).json({ error: 'Admins use the admin inbox.' });
   const conv = Conversations.ensureForMember(req.user.id);
+  maybeSendWelcome(conv); // auto-greet on first sign-in / open
   const since = Number(req.query.since || 0);
   if (!since) Conversations.markReadByMember(conv.id);
   res.json({
@@ -245,6 +264,41 @@ adminApp.delete('/api/admin/conversations/:id/messages', requireAdmin, (req, res
 adminApp.delete('/api/admin/chats', requireAdmin, (_req, res) => {
   Messages.clearAll();
   res.json({ ok: true });
+});
+
+// Branding + auto-welcome settings.
+adminApp.get('/api/admin/settings', requireAdmin, (_req, res) => {
+  res.json({
+    businessName: Settings.get('business_name', ''),
+    logo: Settings.get('logo', ''),
+    welcomeMessage: Settings.get('welcome_message', ''),
+  });
+});
+
+adminApp.post('/api/admin/settings', requireAdmin, (req, res) => {
+  if (req.body?.businessName != null) {
+    Settings.set('business_name', String(req.body.businessName).trim().slice(0, 80));
+  }
+  if (req.body?.welcomeMessage != null) {
+    Settings.set('welcome_message', String(req.body.welcomeMessage).slice(0, 4000));
+  }
+  if (req.body?.logo != null) {
+    const logo = String(req.body.logo);
+    // Only accept an empty value (to clear) or a small inline image data URL.
+    if (logo === '') {
+      Settings.set('logo', '');
+    } else if (/^data:image\/(png|jpeg|jpg|gif|webp|svg\+xml);base64,/.test(logo)) {
+      if (logo.length > 2_000_000) return res.status(400).json({ error: 'Logo image is too large (keep it under ~1.5 MB).' });
+      Settings.set('logo', logo);
+    } else {
+      return res.status(400).json({ error: 'Logo must be an image file.' });
+    }
+  }
+  res.json({
+    businessName: Settings.get('business_name', ''),
+    logo: Settings.get('logo', ''),
+    welcomeMessage: Settings.get('welcome_message', ''),
+  });
 });
 
 // Admin site: serve its own files, plus the shared stylesheet.

@@ -33,6 +33,7 @@
         <button class="tab active" data-tab="inbox">Inbox <span class="badge" id="inboxBadge" hidden>0</span></button>
         <button class="tab" data-tab="plans">Plans</button>
         <button class="tab" data-tab="members">Members</button>
+        <button class="tab" data-tab="settings">Settings</button>
       </nav>
 
       <section class="tab-page" data-page="inbox">
@@ -102,6 +103,33 @@
             <p class="error" id="memberError"></p>
           </form>
           <div class="member-list" id="memberList"></div>
+        </div>
+      </section>
+
+      <section class="tab-page" data-page="settings" hidden>
+        <div class="panel">
+          <h2>Branding &amp; auto-welcome</h2>
+          <p class="muted small">Your logo and business name show on both sites. The welcome message is sent to each customer automatically the first time they open their chat.</p>
+          <form class="settings-form" id="settingsForm">
+            <label>Business name
+              <input id="bizName" placeholder="e.g. TechWorld Claude Store" maxlength="80" />
+            </label>
+            <label>Logo (PNG/JPG/SVG, under ~1.5&nbsp;MB)
+              <input id="logoFile" type="file" accept="image/*" />
+            </label>
+            <div class="logo-preview" id="logoPreview" hidden>
+              <img id="logoImg" alt="logo preview" />
+              <button type="button" class="ghost" id="logoRemove">Remove logo</button>
+            </div>
+            <label>Auto-welcome message
+              <textarea id="welcomeMsg" placeholder="Hi and welcome! 👋 Click Buy on a plan below and I'll personally help you set up and subscribe your Claude.ai account, then send it to you. Ask me anything here."></textarea>
+            </label>
+            <div class="row">
+              <button class="primary" type="submit">Save settings</button>
+              <span class="muted small" id="settingsSaved" hidden>Saved ✓</span>
+            </div>
+            <p class="error" id="settingsError"></p>
+          </form>
         </div>
       </section>
     </template>

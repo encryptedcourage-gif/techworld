@@ -43,8 +43,23 @@ const timeStr = (iso) => {
 const tpl = (id) => $(`#${id}`).content.cloneNode(true);
 const stopPolling = () => { if (state.pollTimer) { clearInterval(state.pollTimer); state.pollTimer = null; } };
 
+function setBrand(c) {
+  const name = c.businessName || c.siteName || 'Claude Marketplace';
+  document.title = name;
+  const brand = $('#brand');
+  brand.innerHTML = '';
+  if (c.logo) {
+    const img = document.createElement('img');
+    img.src = c.logo; img.alt = ''; img.className = 'brand-logo';
+    brand.append(img);
+  }
+  const span = document.createElement('span');
+  span.textContent = name;
+  brand.append(span);
+}
+
 async function renderTop() {
-  try { const c = await api('/api/config'); $('#brand').textContent = c.siteName; document.title = c.siteName; } catch {}
+  try { setBrand(await api('/api/config')); } catch {}
   topActions.innerHTML = '';
   if (state.user) {
     const who = document.createElement('span');

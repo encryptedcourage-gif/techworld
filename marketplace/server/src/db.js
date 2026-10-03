@@ -50,7 +50,15 @@ db.exec(`
     updated_at   TEXT NOT NULL DEFAULT (datetime('now')),
     admin_unread INTEGER NOT NULL DEFAULT 0,  -- new member messages the admin hasn't read
     member_unread INTEGER NOT NULL DEFAULT 0, -- new admin messages the member hasn't read
+    welcomed     INTEGER NOT NULL DEFAULT 0,  -- has the auto-welcome been sent yet?
     FOREIGN KEY (member_id) REFERENCES users(id)
+  );
+
+  -- Simple key/value store for branding (business name, logo) and the
+  -- admin's auto-welcome message.
+  CREATE TABLE IF NOT EXISTS settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL DEFAULT ''
   );
 
   CREATE TABLE IF NOT EXISTS messages (
@@ -64,6 +72,24 @@ db.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_messages_conv ON messages(conversation_id, id);
 `);
+
+// Migration: add the "welcomed" column to databases created before it existed.
+const convCols = db.prepare('PRAGMA table_info(conversations)').all().map((c) => c.name);
+if (!convCols.includes('welcomed')) {
+  db.exec('ALTER TABLE conversations ADD COLUMN welcomed INTEGER NOT NULL DEFAULT 0');
+}
+
+export const Settings = {
+  get(key, fallback = '') {
+    const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(key);
+    return row ? row.value : fallback;
+  },
+  set(key, value) {
+    db.prepare(
+      'INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value'
+    ).run(key, String(value ?? ''));
+  },
+};
 
 export const Users = {
   create({ email, passwordHash, role = 'member', name = '' }) {
@@ -171,6 +197,9 @@ export const Conversations = {
   },
   markReadByMember(id) {
     db.prepare('UPDATE conversations SET member_unread = 0 WHERE id = ?').run(id);
+  },
+  markWelcomed(id) {
+    db.prepare('UPDATE conversations SET welcomed = 1 WHERE id = ?').run(id);
   },
   bumpUnread(id, forRole) {
     // A message from `forRole` is unread by the *other* side.
